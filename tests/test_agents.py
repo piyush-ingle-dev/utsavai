@@ -1,10 +1,9 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-import pytest
-
 import planner
-from agents import chat, graph, llm as llm_mod
+from agents import chat, graph
+from agents import llm as llm_mod
 from agents.rag import load_documents, retrieve
 
 

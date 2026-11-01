@@ -62,7 +62,9 @@ class KnowledgeRetriever(BaseRetriever):
         self._docs = load_documents()
         self._bm25 = _bm25()
 
-    def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun | None = None) -> list[Document]:
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun | None = None
+    ) -> list[Document]:
         scores = self._bm25.get_scores(tokenize(query))
         order = sorted(range(len(self._docs)), key=lambda i: scores[i], reverse=True)
         found = []

@@ -21,6 +21,10 @@ export default function PlanView({ planId, onNew }) {
     return () => { alive = false; };
   }, [planId]);
 
+  useEffect(() => {
+    document.title = data ? `${data.title} | UtsavAI` : "Loading plan | UtsavAI";
+  }, [data?.title]);
+
   if (error) {
     return (
       <section className="hero">
@@ -33,6 +37,7 @@ export default function PlanView({ planId, onNew }) {
   if (!data) return <p role="status">Loading your plan...</p>;
 
   const { plan } = data;
+  const canEdit = data.can_edit;
 
   async function toggle(listName, itemId) {
     setSaveError("");
@@ -72,6 +77,11 @@ export default function PlanView({ planId, onNew }) {
           <progress value={data.completed} max={data.total} />
         </p>
         {saveError && <div className="alert" role="alert">{saveError}</div>}
+        {!canEdit && (
+          <p className="muted" role="note">
+            View only. Checklists can be ticked from the browser where this plan was created.
+          </p>
+        )}
       </section>
 
       {plan.warnings.map((w) => <div className="alert" role="note" key={w}>{w}</div>)}
@@ -100,7 +110,7 @@ export default function PlanView({ planId, onNew }) {
           {plan.timeline.map((t) => (
             <li key={t.id}>
               <label>
-                <input type="checkbox" checked={t.done} onChange={() => toggle("timeline", t.id)} />
+                <input type="checkbox" checked={t.done} disabled={!canEdit} onChange={() => toggle("timeline", t.id)} />
                 <span>
                   <strong>{dmy(t.due)}</strong> {t.task} <em className="chip">{t.category}</em>
                   {t.late && <em className="chip warn">compressed</em>}
@@ -117,7 +127,7 @@ export default function PlanView({ planId, onNew }) {
           {plan.vendors.map((v) => (
             <li key={v.id}>
               <label>
-                <input type="checkbox" checked={v.done} onChange={() => toggle("vendors", v.id)} />
+                <input type="checkbox" checked={v.done} disabled={!canEdit} onChange={() => toggle("vendors", v.id)} />
                 <span><strong>{v.vendor}</strong><br /><span className="muted">Ask about: {v.ask}</span></span>
               </label>
             </li>

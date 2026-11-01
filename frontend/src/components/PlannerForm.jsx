@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createPlan } from "../api.js";
+import { createPlan, saveEditToken } from "../api.js";
 
 const TYPES = [
   { key: "wedding", label: "Wedding" },
@@ -36,7 +36,8 @@ export default function PlannerForm({ onCreated }) {
     setErrors({});
     setMessage("");
     try {
-      const { id } = await createPlan(values);
+      const { id, edit_token: editToken } = await createPlan(values);
+      saveEditToken(id, editToken);
       onCreated(id);
     } catch (err) {
       setErrors(err.errors || {});

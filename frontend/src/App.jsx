@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PlannerForm from "./components/PlannerForm.jsx";
 import PlanView from "./components/PlanView.jsx";
 
@@ -10,12 +10,25 @@ function readPlanId() {
 
 export default function App() {
   const [planId, setPlanId] = useState(readPlanId());
+  const mainRef = useRef(null);
+  const firstRender = useRef(true);
 
   useEffect(() => {
     const onPop = () => setPlanId(readPlanId());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // After moving between the form and a plan, set the page title and move focus to the main area
+  // so keyboard and screen reader users start at the new content instead of the old position.
+  useEffect(() => {
+    if (!planId) document.title = "UtsavAI | Celebration & Event Planner";
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus();
+  }, [planId]);
 
   function open(id) {
     window.history.pushState({}, "", id ? `/plan/${id}` : "/");
@@ -30,7 +43,7 @@ export default function App() {
         <a className="brand" href="/" onClick={(e) => { e.preventDefault(); open(null); }}>UtsavAI</a>
         <span className="tag">Celebration &amp; Event Planner</span>
       </header>
-      <main id="main" tabIndex={-1}>
+      <main id="main" tabIndex={-1} ref={mainRef}>
         {planId ? <PlanView planId={planId} onNew={() => open(null)} /> : <PlannerForm onCreated={open} />}
       </main>
       <footer className="site">
