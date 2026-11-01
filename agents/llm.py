@@ -3,26 +3,33 @@ import json
 import logging
 import os
 import re
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import SecretStr
+
+from schemas import CreativeResult, Idea
 
 log = logging.getLogger(__name__)
 
+MAX_OUTPUT_TOKENS = 2000  # headroom for models that spend part of the limit on hidden reasoning
 
-def get_llm():
+
+def get_llm() -> Any:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         return None
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-        api_key=key,
+        api_key=SecretStr(key),
         base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        temperature=0.6, timeout=12, max_retries=0, max_tokens=800,
+        temperature=0.6, timeout=12, max_retries=0,
+        max_tokens=MAX_OUTPUT_TOKENS,  # type: ignore[call-arg]  # alias of max_completion_tokens
     )
 
 
-def parse_json(text: str) -> dict | None:
+def parse_json(text: str) -> dict[str, Any] | None:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
@@ -34,7 +41,7 @@ def parse_json(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def call(llm, system: str, user: str) -> str | None:
+def call(llm: Any, system: str, user: str) -> str | None:
     if llm is None:
         return None
     try:
@@ -45,20 +52,26 @@ def call(llm, system: str, user: str) -> str | None:
         return None
 
 
-def _s(value, limit):
+def _s(value: object, limit: int) -> str:
     return str(value).strip()[:limit] if isinstance(value, (str, int, float)) else ""
 
 
-def sanitize_creative(raw) -> dict | None:
-    """Keep only the expected keys, types and lengths from model output."""
+def _clean_list(value: object, limit: int, max_items: int) -> list[str]:
+    items = value if isinstance(value, list) else []
+    return [text for text in (_s(item, limit) for item in items[:max_items]) if text]
+
+
+def sanitize_creative(raw: object) -> CreativeResult | None:
+    """Keep only the expected keys, types and lengths from model output; None if it is unusable."""
     if not isinstance(raw, dict):
         return None
-    ideas = [{"title": _s(i["title"], 80), "detail": _s(i.get("detail"), 240)}
-             for i in (raw.get("ideas") or [])[:6] if isinstance(i, dict) and _s(i.get("title"), 80)]
-    out = {
-        "summary": _s(raw.get("summary"), 500),
-        "ideas": ideas,
-        "vendor_tips": [t for t in (_s(x, 200) for x in (raw.get("vendor_tips") or [])[:5]) if t],
-        "risks": [t for t in (_s(x, 200) for x in (raw.get("risks") or [])[:5]) if t],
-    }
-    return out if out["summary"] and out["ideas"] else None
+    raw_ideas = raw.get("ideas")
+    ideas = [Idea(title=_s(item.get("title"), 80), detail=_s(item.get("detail"), 240))
+             for item in (raw_ideas[:6] if isinstance(raw_ideas, list) else [])
+             if isinstance(item, dict) and _s(item.get("title"), 80)]
+    summary = _s(raw.get("summary"), 500)
+    if not summary or not ideas:
+        return None
+    return CreativeResult(summary=summary, ideas=ideas,
+                          vendor_tips=_clean_list(raw.get("vendor_tips"), 200, 5),
+                          risks=_clean_list(raw.get("risks"), 200, 5))

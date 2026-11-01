@@ -9,20 +9,22 @@ follow-up questions from a planning knowledge base.
 - **Agents:** LangGraph state graph: Researcher, Planner, Creative, Critic, with a retry loop
 - **RAG:** LangChain retriever over a 27-passage planning guide (BM25, works offline)
 - **LLM:** LangChain ChatOpenAI against any OpenAI-compatible endpoint (optional; the app works without a key)
-- **Frontend:** React 18 + Vite, built into `web/` and served by Flask (one deployment)
-- **Quality gates (CI):** ruff, bandit, pip-audit, pytest (53 tests), frontend build
+- **Frontend:** React 18 + TypeScript (strict) + Vite, built into `web/` (generated) and served by Flask (one deployment)
+- **Quality gates (CI):** ruff, mypy, bandit, pip-audit, pytest with a 95% coverage floor, ESLint with jsx-a11y,
+  `tsc`, Vitest, a production build and Playwright browser tests
 
 ## Project layout
     app.py          application factory, static frontend, error handlers, schema upgrade
     api.py          REST endpoints (blueprint)
     security.py     headers, HTTPS in production, cross-site write check, edit tokens
     config.py       settings from environment variables
-    planner.py      rule engine: validation, budget split, dated timeline, vendors
+    planner.py      rule engine: input validation, budget split, dated timeline, vendors
     catalog.py      event data (budget shares, milestones, vendors, ideas)
+    schemas.py      typed shapes (TypedDict) shared by planner, agents, API and database
     models.py       SQLAlchemy model
     agents/         LangGraph pipeline (graph.py), retriever (rag.py), LLM wrapper (llm.py), chat (chat.py)
-    frontend/       React source
-    tests/          pytest suite
+    frontend/src/   React + TypeScript: components/, hooks/usePlan.ts, api.ts (typed client), lib/, tests next to code
+    tests/          pytest suite (unit, property-based, API, agents) and e2e/ browser tests
 
 ## How the agents work
     retrieve -> structure -> creative -> critic --(failed checks, attempts left)--> creative
@@ -59,22 +61,36 @@ The "How this plan was made" panel in the UI shows every step.
   and numbers and dates never come from the model.
 - **Supply chain:** pinned dependencies, `pip-audit` and `bandit` run in CI.
 
+## Testing
+| Layer | Tooling | What it covers |
+|---|---|---|
+| Backend | pytest, Hypothesis, pytest-cov | 116 tests, 100% line coverage. Property-based tests check that the budget always sums exactly, timelines are sorted and never in the past, and text limits always hold, for any valid input |
+| Agents | pytest with a fake LLM | retry loop, dietary guardrail, malformed or failing model output, prompt-injection placement |
+| Security | pytest | edit-token rules, cross-site requests, HTTPS and HSTS in production, health-check exemption, old-database upgrade |
+| Frontend | Vitest, Testing Library, vitest-axe | 33 tests, about 99% coverage: forms, optimistic updates and rollback, view-only mode, routing and focus, plus an axe scan of each screen |
+| Browser | Playwright (`pytest -m e2e`) | create, tick, reload, read-only visitor, server-side validation |
+
 ## Accessibility
 Semantic landmarks, labelled fields with linked error messages, skip link, focus moved to the main area on
 navigation, page titles per view, visible focus, 44px targets, dark mode, reduced-motion support, print styles.
-Checked with axe-core (no violations on the form or plan pages).
+Enforced three ways: `eslint-plugin-jsx-a11y` at lint time, axe scans inside the component tests, and manual checks with a
+keyboard. The budget table scrolls inside a named, focusable region on small screens.
 
 ## Run locally
     python -m venv .venv && .venv\Scripts\activate      # Windows; use source .venv/bin/activate elsewhere
     pip install -r requirements-dev.txt
     python app.py                                        # http://localhost:5000
-    pytest -q
+    pytest -q --cov                                      # backend tests + coverage
+    mypy && ruff check .                                 # types and lint
 
 Optional LLM: copy `.env.example` to `.env` and set `OPENAI_API_KEY` (plus `OPENAI_BASE_URL` and `OPENAI_MODEL`
 for other OpenAI-compatible providers such as Gemini or OpenRouter).
 
 ## Change the frontend
-    cd frontend && npm install && npm run build          # writes to ../web, commit the result
+    cd frontend && npm install
+    npm run dev                                          # hot reload on :5173, proxies /api to Flask
+    npm run lint && npm run typecheck && npm test
+    npm run build                                        # writes to ../web, commit the result
 
 ## Deploy (Render)
 The built frontend is committed in `web/`, so Render only needs `pip install -r requirements.txt`. See `render.yaml`.

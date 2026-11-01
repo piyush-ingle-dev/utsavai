@@ -3,6 +3,7 @@ import logging
 from datetime import date
 
 from flask import Blueprint, Response, abort, jsonify, request
+from flask.typing import ResponseReturnValue
 
 import planner
 import security
@@ -10,6 +11,7 @@ from agents.chat import answer
 from agents.graph import generate_plan
 from extensions import limiter
 from models import Plan, db
+from schemas import PlanData
 
 log = logging.getLogger(__name__)
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -44,7 +46,7 @@ def require_edit_access(plan: Plan) -> None:
         abort(403)
 
 
-def progress(data: dict) -> tuple[int, int]:
+def progress(data: PlanData) -> tuple[int, int]:
     """(completed, total) across timeline tasks and vendor checks."""
     items = data["timeline"] + data["vendors"]
     return sum(1 for item in items if item["done"]), len(items)
@@ -52,9 +54,9 @@ def progress(data: dict) -> tuple[int, int]:
 
 @bp.post("/plans")
 @limiter.limit("20 per minute")
-def create_plan():
+def create_plan() -> ResponseReturnValue:
     clean, errors = planner.clean_form(json_body())
-    if errors:
+    if clean is None:
         return jsonify(error="Please fix the highlighted fields.", errors=errors), 400
     data = generate_plan(clean)
     token, token_hash = security.new_edit_token()
@@ -69,7 +71,7 @@ def create_plan():
 
 
 @bp.get("/plans/<plan_id>")
-def get_plan(plan_id: str):
+def get_plan(plan_id: str) -> ResponseReturnValue:
     plan = get_plan_or_404(plan_id)
     done, total = progress(plan.data)
     can_edit = security.token_matches(request.headers.get(security.EDIT_HEADER), plan.edit_token_hash)
@@ -82,7 +84,7 @@ def get_plan(plan_id: str):
 
 @bp.post("/plans/<plan_id>/toggle")
 @limiter.limit("120 per minute")
-def toggle(plan_id: str):
+def toggle(plan_id: str) -> ResponseReturnValue:
     plan = get_plan_or_404(plan_id)
     require_edit_access(plan)
     item_id = json_body().get("id")
@@ -99,7 +101,7 @@ def toggle(plan_id: str):
 
 @bp.post("/plans/<plan_id>/ask")
 @limiter.limit("20 per minute")
-def ask(plan_id: str):
+def ask(plan_id: str) -> ResponseReturnValue:
     plan = get_plan_or_404(plan_id)
     question = str(json_body().get("question") or "").strip()[:300]
     if len(question) < 3:
@@ -112,7 +114,7 @@ def _ics_escape(text: str) -> str:
 
 
 @bp.get("/plans/<plan_id>/calendar.ics")
-def calendar(plan_id: str):
+def calendar(plan_id: str) -> ResponseReturnValue:
     plan = get_plan_or_404(plan_id)
     stamp = f"{date.today():%Y%m%d}T000000Z"
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//UtsavAI//EN"]
@@ -128,5 +130,5 @@ def calendar(plan_id: str):
 @bp.get("/health")
 @limiter.exempt
 @security.exempt_from_https_redirect
-def health():
+def health() -> ResponseReturnValue:
     return jsonify(status="ok")

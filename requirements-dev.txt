@@ -1,5 +1,8 @@
 -r requirements.txt
 pytest==9.0.3
+pytest-cov
+hypothesis
+mypy
 ruff
 bandit
 pip-audit

@@ -118,3 +118,33 @@ def test_chat_fallback_and_llm(monkeypatch):
     monkeypatch.setattr(llm_mod, "get_llm", lambda: FakeLLM("Use shifts and leads."))
     assert chat.answer("how do I manage volunteers", "community", "s")["answer"] == "Use shifts and leads."
     assert chat.answer("zzzz qqqq", "community", "s")["sources"] == []
+
+
+def _plan_with(**over):
+    plan = planner.build_plan(clean())
+    plan.update(summary="ok", ideas=[{"title": "a", "detail": "a long enough detail"}] * 3)
+    plan.update(over)
+    return plan
+
+
+def test_check_plan_accepts_a_good_plan():
+    assert graph.check_plan(_plan_with(), clean()) == []
+
+
+def test_check_plan_flags_each_problem():
+    assert "fewer than 3 ideas" in graph.check_plan(_plan_with(ideas=[]), clean())
+    short = [{"title": "a", "detail": "short"}] * 3
+    assert "an idea has no useful detail" in graph.check_plan(_plan_with(ideas=short), clean())
+    assert "missing summary" in graph.check_plan(_plan_with(summary=""), clean())
+
+
+def test_route_stops_after_max_attempts():
+    assert graph.route({"issues": ["x"], "attempts": 1}) == "creative"
+    assert graph.route({"issues": ["x"], "attempts": graph.MAX_ATTEMPTS}) == "finalize"
+    assert graph.route({"issues": [], "attempts": 1}) == "finalize"
+
+
+def test_vegetarian_check_covers_vendor_tips():
+    plan = _plan_with(vendor_tips=["Order a chicken counter"])
+    assert any("vegetarian" in i for i in graph.check_plan(plan, clean(preferences="Jain family")))
+    assert graph.check_plan(plan, clean(preferences="")) == []

@@ -1,6 +1,7 @@
 """Application factory. Run locally with `python app.py`; gunicorn serves `app:app`."""
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,7 +9,9 @@ from dotenv import load_dotenv
 load_dotenv(override=True)  # read .env for local runs; on Render the real environment variables are used
 
 from flask import Flask, jsonify, send_from_directory  # noqa: E402
+from flask.typing import ResponseReturnValue  # noqa: E402
 from sqlalchemy import inspect, text  # noqa: E402
+from werkzeug.exceptions import HTTPException  # noqa: E402
 
 import api  # noqa: E402
 import security  # noqa: E402
@@ -56,7 +59,7 @@ def upgrade_schema() -> None:
 def register_web(app: Flask) -> None:
     """Serve the built React app for "/" and "/plan/<id>" (the browser router handles the rest)."""
 
-    def spa():
+    def spa() -> ResponseReturnValue:
         if not (WEB_DIR / "index.html").exists():
             return jsonify(error="Frontend not built. Run: cd frontend && npm install && npm run build"), 503
         return send_from_directory(WEB_DIR, "index.html")
@@ -67,7 +70,7 @@ def register_web(app: Flask) -> None:
     @app.get("/healthz")
     @limiter.exempt
     @security.exempt_from_https_redirect
-    def healthz():
+    def healthz() -> ResponseReturnValue:
         return jsonify(status="ok")
 
 
@@ -80,8 +83,8 @@ def register_error_handlers(app: Flask) -> None:
         429: "Too many requests. Please wait a minute.",
         500: "Something went wrong on our side.",
     }
-    def make_handler(message: str):
-        def handler(error):
+    def make_handler(message: str) -> Callable[[HTTPException], ResponseReturnValue]:
+        def handler(error: HTTPException) -> ResponseReturnValue:
             return jsonify(error=message), getattr(error, "code", None) or 500
         return handler
 

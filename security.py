@@ -7,6 +7,8 @@ Threat model in short: plans are anonymous, so each plan has two secrets.
 import hashlib
 import hmac
 import secrets
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlsplit
 
 from flask import Flask, Response, abort, request
@@ -41,7 +43,9 @@ def _digest(token: str) -> str:
 
 def token_matches(token: str | None, stored_hash: str) -> bool:
     """Constant-time check of a presented token against the stored hash."""
-    return bool(token) and hmac.compare_digest(_digest(token), stored_hash)
+    if not token:
+        return False
+    return hmac.compare_digest(_digest(token), stored_hash)
 
 
 def reject_cross_site_writes() -> None:
@@ -62,9 +66,9 @@ def reject_cross_site_writes() -> None:
         abort(403)
 
 
-def exempt_from_https_redirect(view):
+def exempt_from_https_redirect[ViewT: Callable[..., Any]](view: ViewT) -> ViewT:
     """Health checks come from inside the platform over plain HTTP, so they must not be redirected."""
-    view.talisman_view_options = {"force_https": False}
+    view.talisman_view_options = {"force_https": False}  # type: ignore[attr-defined]
     return view
 
 

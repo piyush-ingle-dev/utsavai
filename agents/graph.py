@@ -14,13 +14,15 @@ Agents:
 import json
 import operator
 import re
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 import planner
 from agents import llm as llm_mod
 from agents.rag import retrieve
+from schemas import CleanForm, GuideNote, Idea, PlanData, TraceStep
 
 MAX_ATTEMPTS = 2
 MIN_IDEAS = 3
@@ -44,27 +46,29 @@ SYSTEM = (
 
 
 class PlanState(TypedDict, total=False):
-    clean: dict[str, Any]
-    plan: dict[str, Any]
-    context: list[dict[str, str]]
+    """Everything the agents share. `trace` is append-only: LangGraph concatenates what each node returns."""
+
+    clean: CleanForm
+    plan: PlanData
+    context: list[GuideNote]
     issues: list[str]
     attempts: int
-    trace: Annotated[list[dict[str, str]], operator.add]
+    trace: Annotated[list[TraceStep], operator.add]
 
 
-def _step(agent: str, detail: str) -> list[dict[str, str]]:
-    return [{"agent": agent, "detail": detail}]
+def _step(agent: str, detail: str) -> list[TraceStep]:
+    return [TraceStep(agent=agent, detail=detail)]
 
 
-def _wants_vegetarian(clean: dict[str, Any]) -> bool:
+def _wants_vegetarian(clean: CleanForm) -> bool:
     return bool(VEG_PREF.search(clean["preferences"]))
 
 
-def _idea_text(idea: dict[str, str]) -> str:
+def _idea_text(idea: Idea) -> str:
     return f"{idea['title']} {idea['detail']}"
 
 
-def _breaks_diet(clean: dict[str, Any], idea: dict[str, str]) -> bool:
+def _breaks_diet(clean: CleanForm, idea: Idea) -> bool:
     return _wants_vegetarian(clean) and bool(NON_VEG_TERMS.search(_idea_text(idea)))
 
 
@@ -76,7 +80,7 @@ def retrieve_node(state: PlanState) -> dict[str, Any]:
     query = " ".join([c["event_type"], c["theme"], c["city"], c["preferences"],
                       "budget vendors timeline safety guests"])
     docs = retrieve(query, c["event_type"], k=8)
-    context = [{"title": d.metadata["title"], "kind": d.metadata["kind"], "text": d.page_content} for d in docs]
+    context = [GuideNote(title=d.metadata["title"], kind=d.metadata["kind"], text=d.page_content) for d in docs]
     titles = ", ".join(x["title"] for x in context[:4]) + ("..." if len(context) > 4 else "")
     return {"context": context, "trace": _step("Researcher", f"Retrieved {len(context)} guide passages: {titles}")}
 
@@ -93,10 +97,10 @@ def _grounded_creative(state: PlanState) -> dict[str, Any]:
     """No-LLM path: ideas, tips and risks come straight from the retrieved passages."""
     context = state["context"]
 
-    def texts(kind: str) -> list[dict[str, str]]:
+    def texts(kind: str) -> list[GuideNote]:
         return [x for x in context if x["kind"] == kind]
 
-    guide_ideas = [{"title": x["title"], "detail": x["text"][:240]} for x in texts("idea")]
+    guide_ideas = [Idea(title=x["title"], detail=x["text"][:240]) for x in texts("idea")]
     base = planner.build_ideas(state["clean"])
     return {"ideas": (base[:1] + guide_ideas + base[1:])[:6],
             "vendor_tips": [x["text"][:200] for x in texts("tip")][:3],
@@ -118,7 +122,7 @@ def _llm_prompt(state: PlanState) -> str:
 def creative_node(state: PlanState) -> dict[str, Any]:
     """Creative: LLM writes the narrative parts; falls back to the retrieved guide if it cannot."""
     attempts = state.get("attempts", 0) + 1
-    plan = dict(state["plan"])
+    plan = state["plan"].copy()
     llm = llm_mod.get_llm()
     result = None
     if llm is not None:
@@ -126,18 +130,20 @@ def creative_node(state: PlanState) -> dict[str, Any]:
         result = llm_mod.sanitize_creative(llm_mod.parse_json(text)) if text else None
 
     if result:
-        plan.update(source="ai+rag", **result)
+        plan["source"] = "ai+rag"
+        plan.update(result)
         note = (f"Attempt {attempts}: LLM wrote summary, {len(result['ideas'])} ideas, tips and risks "
                 "using the retrieved guide")
     else:
-        plan.update(source="rules+rag", **_grounded_creative(state))
+        plan["source"] = "rules+rag"
+        plan.update(_grounded_creative(state))  # type: ignore[typeddict-item]
         note = f"Attempt {attempts}: built ideas, tips and risks directly from the retrieved guide"
         if llm is not None:
             note += " (LLM unavailable)"
     return {"plan": plan, "attempts": attempts, "trace": _step("Creative", note)}
 
 
-def check_plan(plan: dict[str, Any], clean: dict[str, Any]) -> list[str]:
+def check_plan(plan: PlanData, clean: CleanForm) -> list[str]:
     """Critic rules. Returns a list of human-readable problems, empty if the plan is fine."""
     issues = []
     if sum(r["amount"] for r in plan["budget"]) != clean["budget"]:
@@ -173,7 +179,7 @@ def route(state: PlanState) -> str:
 
 def finalize_node(state: PlanState) -> dict[str, Any]:
     """Finalizer: if checks still fail after the last attempt, strip the offending items and pad with safe ones."""
-    plan = dict(state["plan"])
+    plan = state["plan"].copy()
     clean = state["clean"]
     note = "Plan approved"
     if state["issues"]:
@@ -194,7 +200,7 @@ def finalize_node(state: PlanState) -> dict[str, Any]:
 
 # ---- graph -----------------------------------------------------------------
 
-def build_graph():
+def build_graph() -> CompiledStateGraph:
     graph = StateGraph(PlanState)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("structure", structure_node)
@@ -210,12 +216,12 @@ def build_graph():
     return graph.compile()
 
 
-_compiled = None
+_compiled: CompiledStateGraph | None = None
 
 
-def generate_plan(clean: dict[str, Any]) -> dict[str, Any]:
+def generate_plan(clean: CleanForm) -> PlanData:
     """Run the agent pipeline for validated form values and return the finished plan."""
     global _compiled  # noqa: PLW0603 (compile once, reuse across requests)
     if _compiled is None:
         _compiled = build_graph()
-    return _compiled.invoke({"clean": clean, "trace": []})["plan"]
+    return cast(PlanData, _compiled.invoke({"clean": clean, "trace": []})["plan"])

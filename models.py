@@ -2,10 +2,13 @@
 import json
 import uuid
 from datetime import UTC, date, datetime
+from typing import cast
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Date, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from schemas import PlanData
 
 
 class Base(DeclarativeBase):
@@ -15,7 +18,7 @@ class Base(DeclarativeBase):
 db = SQLAlchemy(model_class=Base)
 
 
-class Plan(db.Model):
+class Plan(db.Model):  # type: ignore[name-defined]  # Flask-SQLAlchemy builds Model at runtime
     __tablename__ = "plans"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
@@ -32,10 +35,10 @@ class Plan(db.Model):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     @property
-    def data(self) -> dict:
+    def data(self) -> PlanData:
         """The generated plan (budget, timeline, vendors, ideas, trace) as a dict."""
-        return json.loads(self.data_json)
+        return cast(PlanData, json.loads(self.data_json))
 
     @data.setter
-    def data(self, value: dict) -> None:
+    def data(self, value: PlanData) -> None:
         self.data_json = json.dumps(value)
